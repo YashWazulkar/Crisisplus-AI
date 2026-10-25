@@ -1,0 +1,13 @@
+import sys
+import asyncio
+import pytest
+
+if sys.platform == "win32":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"

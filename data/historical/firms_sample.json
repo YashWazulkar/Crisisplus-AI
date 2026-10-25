@@ -1,0 +1,35 @@
+[
+  {
+    "external_id": "firms-ref-20261025-01",
+    "title": "Thermal Fire Anomaly: FRP 38.4 MW (Central Forest Range)",
+    "description": "VIIRS SNPP thermal anomaly detected in forest buffer zone. Radiative power 38.4 MW, brightness 342.1K.",
+    "latitude": 20.2961,
+    "longitude": 85.8245,
+    "region": "Odisha Forest Division",
+    "severity": 0.62,
+    "magnitude": 38.4,
+    "payload": {"brightness_k": 342.1, "frp_mw": 38.4, "satellite": "VIIRS_SNPP", "confidence": "high"}
+  },
+  {
+    "external_id": "firms-ref-20261025-02",
+    "title": "Thermal Fire Cluster: FRP 74.2 MW (Forest Perimeter)",
+    "description": "VIIRS high-confidence fire cluster with thermal intensity 74.2 MW. Spatial concentration indicates active spreading front.",
+    "latitude": 20.3450,
+    "longitude": 85.8720,
+    "region": "Odisha Forest Division",
+    "severity": 0.78,
+    "magnitude": 74.2,
+    "payload": {"brightness_k": 358.6, "frp_mw": 74.2, "satellite": "VIIRS_SNPP", "confidence": "high"}
+  },
+  {
+    "external_id": "firms-ref-20261025-03",
+    "title": "Thermal Hotspot: FRP 19.8 MW (Agro-Forest Fringe)",
+    "description": "Nominal confidence thermal signature. Possible agricultural stubble burning or small controlled fire.",
+    "latitude": 20.2100,
+    "longitude": 85.7900,
+    "region": "Odisha Forest Division",
+    "severity": 0.40,
+    "magnitude": 19.8,
+    "payload": {"brightness_k": 328.2, "frp_mw": 19.8, "satellite": "VIIRS_SNPP", "confidence": "nominal"}
+  }
+]
