@@ -93,10 +93,9 @@ export default function CrisisMap({
 
     L.control.zoom({ position: 'bottomright' }).addTo(map)
 
-    // Dark tactical CartoDB tile layer
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO &copy; NMC GIS',
-      subdomains: 'abcd',
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      subdomains: 'abc',
       maxZoom: 19,
     }).addTo(map)
 

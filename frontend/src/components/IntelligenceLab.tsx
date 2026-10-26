@@ -164,6 +164,7 @@ export default function IntelligenceLab({ apiBase }: Props) {
   }
 
   const currentReplayStep = replayData?.timeline?.[currentMinute] || {}
+  const finalReplayStep = replayData?.timeline?.[replayData.timeline.length - 1]
   const twinAStep = twinData?.scenario_a?.timeline?.[twinMinute] || {}
   const twinBStep = twinData?.scenario_b?.timeline?.[twinMinute] || {}
   const sideBySideList = twinData?.side_by_side_timeline || []
@@ -459,6 +460,24 @@ export default function IntelligenceLab({ apiBase }: Props) {
                 <div style={{ fontSize: '12px', color: 'var(--text-primary)', lineHeight: '1.4' }}>
                   {currentReplayStep.missing_information_needed || 'Monitoring stream status.'}
                 </div>
+              </div>
+
+              <div className="lab-response">
+                <div>
+                  <div className="lab-response-label">
+                    {currentMinute === 10 ? 'FINAL SIMULATION RESPONSE' : `RESPONSE AT T+${currentMinute}M`}
+                  </div>
+                  <div className="lab-response-detail">
+                    {currentMinute === 10
+                      ? 'Response posture reached after the 10-minute replay.'
+                      : 'Current response posture in the replay.'}
+                  </div>
+                </div>
+                <strong className={`lab-response-level ${(currentReplayStep.recommended_action || 'WATCH').toLowerCase()}`}>
+                  {currentMinute === 10
+                    ? finalReplayStep?.recommended_action || currentReplayStep.recommended_action || 'WATCH'
+                    : currentReplayStep.recommended_action || 'WATCH'}
+                </strong>
               </div>
             </div>
           </div>

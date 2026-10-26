@@ -10,6 +10,10 @@ import {
   Droplets,
   Layers,
   X,
+  CloudRain,
+  Thermometer,
+  CarFront,
+  Waves,
 } from 'lucide-react'
 
 interface Props {
@@ -22,23 +26,37 @@ export default function SubregionDetailPanel({ apiBase, zoneId, onClose }: Props
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [showAreaInfo, setShowAreaInfo] = useState(false)
 
   useEffect(() => {
+    let active = true
+    const loadAssessment = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/region/${zoneId}`)
+        if (!response.ok) throw new Error('Zone assessment unavailable')
+        const assessment = await response.json()
+        if (active) {
+          setData(assessment)
+          setError('')
+          setLoading(false)
+        }
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : 'Could not load zone assessment')
+          setLoading(false)
+        }
+      }
+    }
+
     setLoading(true)
     setError('')
-    fetch(`${apiBase}/api/region/${zoneId}`)
-      .then(res => {
-        if (!res.ok) throw new Error('Zone assessment unavailable')
-        return res.json()
-      })
-      .then(d => {
-        setData(d)
-        setLoading(false)
-      })
-      .catch(err => {
-        setError(err.message || 'Could not load zone assessment')
-        setLoading(false)
-      })
+    setShowAreaInfo(false)
+    loadAssessment()
+    const refreshTimer = window.setInterval(loadAssessment, 15000)
+    return () => {
+      active = false
+      window.clearInterval(refreshTimer)
+    }
   }, [apiBase, zoneId])
 
   if (loading) {
@@ -49,7 +67,7 @@ export default function SubregionDetailPanel({ apiBase, zoneId, onClose }: Props
     )
   }
 
-  if (error || !data) {
+  if (!data) {
     return (
       <div className="subregion-panel panel" style={{ padding: '20px', minWidth: '320px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -70,6 +88,15 @@ export default function SubregionDetailPanel({ apiBase, zoneId, onClose }: Props
   const xai = data.xai_explanation || {}
   const forecasts = data.forecasts || []
   const events = data.events || []
+  const latestEvent = (types: string[]) => events.find((event: any) => types.includes(event.event_type))
+  const temperatureEvent = events.find((event: any) =>
+    event.payload?.temperature_c !== undefined || event.event_type === 'temperature_anomaly'
+  )
+  const trafficEvent = latestEvent(['traffic_speed', 'ambulance_delay'])
+  const waterEvent = latestEvent(['water_level', 'road_flooding', 'drainage_overflow', 'flood'])
+  const activityEvents = events.slice(0, 5)
+  const temperature = temperatureEvent?.payload?.temperature_c
+  const rainfall = events.find((event: any) => event.event_type === 'rainfall')
 
   return (
     <div
@@ -129,6 +156,12 @@ export default function SubregionDetailPanel({ apiBase, zoneId, onClose }: Props
           <div style={{ fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>{data.events_count || 0}</div>
         </div>
       </div>
+
+      <button className="area-info-open" onClick={() => setShowAreaInfo(true)}>
+        <Activity size={15} />
+        View area conditions & activity
+        <ChevronRight size={15} />
+      </button>
 
       {/* Localities & Critical Assets */}
       <div style={{ marginBottom: '14px', background: '#0b1320', padding: '10px 12px', borderRadius: '6px', fontSize: '11px' }}>
@@ -244,6 +277,83 @@ export default function SubregionDetailPanel({ apiBase, zoneId, onClose }: Props
               <li key={i}>{step}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {showAreaInfo && (
+        <div className="area-info-backdrop" onClick={() => setShowAreaInfo(false)}>
+          <section
+            className="area-info-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="area-info-title"
+            onClick={event => event.stopPropagation()}
+          >
+            <header className="area-info-header">
+              <div>
+                <span>LIVE AREA SNAPSHOT</span>
+                <h2 id="area-info-title">{data.name}</h2>
+                <small>Area readings refresh every 15 seconds</small>
+              </div>
+              <button aria-label="Close area information" onClick={() => setShowAreaInfo(false)}>
+                <X size={18} />
+              </button>
+            </header>
+
+            {error && <p className="area-info-refresh-error">Latest refresh failed: {error}. Showing the last available assessment.</p>}
+
+            <div className="area-info-metrics">
+              <article>
+                <CloudRain size={17} />
+                <span>Rainfall</span>
+                <strong>{rainfall ? `${rainfall.magnitude ?? 'Observed'} ${rainfall.magnitude_unit || ''}` : 'No local reading'}</strong>
+                <small>{rainfall?.title || 'No recent rainfall event for this zone'}</small>
+              </article>
+              <article>
+                <Thermometer size={17} />
+                <span>Temperature</span>
+                <strong>{temperature !== undefined ? `${temperature} °C` : 'No local reading'}</strong>
+                <small>{temperatureEvent?.title || 'No recent temperature observation for this zone'}</small>
+              </article>
+              <article>
+                <CarFront size={17} />
+                <span>Traffic & transit</span>
+                <strong>
+                  {trafficEvent
+                    ? `${trafficEvent.magnitude ?? trafficEvent.event_type.replace('_', ' ')} ${trafficEvent.magnitude_unit || ''}`
+                    : 'No local reading'}
+                </strong>
+                <small>{trafficEvent?.title || 'No recent traffic or ambulance activity for this zone'}</small>
+              </article>
+              <article>
+                <Waves size={17} />
+                <span>Water & drainage</span>
+                <strong>{waterEvent ? waterEvent.event_type.replace(/_/g, ' ') : 'No active report'}</strong>
+                <small>{waterEvent?.title || 'No recent water-level or flooding report for this zone'}</small>
+              </article>
+            </div>
+
+            <section className="area-info-activities">
+              <h3>Other recent area activity</h3>
+              {activityEvents.length > 0 ? (
+                <ul>
+                  {activityEvents.map((event: any, index: number) => (
+                    <li key={`${event.event_id || event.source_id}-${index}`}>
+                      <span className="area-activity-type">{event.event_type.replace(/_/g, ' ')}</span>
+                      <span>{event.title}</span>
+                      <small>{event.source_id} · {Math.round((event.severity || 0) * 100)}% severity</small>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>No recent local activity has been recorded for this area. District-wide readings are not presented as area measurements.</p>
+              )}
+            </section>
+
+            <footer>
+              Figures use observations assigned to this administrative zone. Missing readings mean no localized observation is currently available.
+            </footer>
+          </section>
         </div>
       )}
     </div>

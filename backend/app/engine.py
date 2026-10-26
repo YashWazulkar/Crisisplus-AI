@@ -69,12 +69,20 @@ class InferenceEngine:
         self.ledger: deque[dict[str, Any]] = deque(maxlen=300)
         self.seen_ids: set[str] = set()
         self.previous_action = "WATCH"
+        self.latest_decision = self.decision_engine.evaluate(self.probabilities, [])
         self.tick = 0
         self.active_anomalies: list[dict[str, Any]] = []
         self.last_assessment_timestamp: datetime = datetime.now(timezone.utc)
 
         # Zone-specific tracking
         self.zone_events: dict[str, list[dict[str, Any]]] = {z: [] for z in NMC_ZONES}
+        self.zone_norm_events: dict[str, list[NormalizedEvent]] = {z: [] for z in NMC_ZONES}
+        self.zone_bayesian = {z: BayesianInferenceEngine() for z in NMC_ZONES}
+        self.zone_decision_engines = {z: DecisionEngine() for z in NMC_ZONES}
+        self.zone_decisions = {
+            z: self._evaluate_zone_decision(z)
+            for z in self.zone_decision_engines
+        }
         self.active_zone_id: str = "zone-3-hanuman-nagar"
         self.latest_xai_explanation: XAIExplanationResponse | None = None
 
@@ -91,15 +99,25 @@ class InferenceEngine:
         self.retraction_manager.reset()
         self.source_tracker.reset()
         self.decision_engine.reset()
+        for bayesian in self.zone_bayesian.values():
+            bayesian.reset()
+        for decider in self.zone_decision_engines.values():
+            decider.reset()
         self.priors = self.bayesian.default_priors.copy()
         self.probabilities = self.bayesian.probabilities.copy()
         self.events.clear()
         self.ledger.clear()
         self.seen_ids.clear()
         self.previous_action = "WATCH"
+        self.latest_decision = self.decision_engine.evaluate(self.probabilities, [])
         self.tick = 0
         self.active_anomalies.clear()
         self.zone_events = {z: [] for z in NMC_ZONES}
+        self.zone_norm_events = {z: [] for z in NMC_ZONES}
+        self.zone_decisions = {
+            z: self._evaluate_zone_decision(z)
+            for z in self.zone_decision_engines
+        }
         self.active_zone_id = "zone-3-hanuman-nagar"
         self.latest_xai_explanation = None
         self.last_assessment_timestamp = datetime.now(timezone.utc)
@@ -127,6 +145,18 @@ class InferenceEngine:
             source_health_map=self.source_health,
             now=now_utc,
         )
+        self.latest_decision = decision_result
+        for zone_id in self.zone_decision_engines:
+            fresh_events = [
+                event for event in self.zone_norm_events[zone_id]
+                if 0 <= (now_utc - event.ingestion_timestamp).total_seconds() <= 600
+            ]
+            self.zone_norm_events[zone_id] = fresh_events
+            self.zone_bayesian[zone_id].reset()
+            for event in fresh_events:
+                quality_weight = event.source_reliability * (0.25 if event.quality_flags else 1.0)
+                self.zone_bayesian[zone_id].update(event, quality_weight)
+            self.zone_decisions[zone_id] = self._evaluate_zone_decision(zone_id, now_utc)
         action = decision_result["action"]
         expected_costs = decision_result["expected_costs"]
         forecasts = self.forecast(self.active_zone_id)
@@ -260,8 +290,13 @@ class InferenceEngine:
         self.events.appendleft(entry)
 
         if norm_event.assigned_zone_id in self.zone_events:
-            self.zone_events[norm_event.assigned_zone_id].insert(0, entry)
-            self.zone_events[norm_event.assigned_zone_id] = self.zone_events[norm_event.assigned_zone_id][:30]
+            zone_id = norm_event.assigned_zone_id
+            self.zone_events[zone_id].insert(0, entry)
+            self.zone_events[zone_id] = self.zone_events[zone_id][:30]
+            self.zone_norm_events[zone_id].append(norm_event)
+            self.zone_norm_events[zone_id] = self.zone_norm_events[zone_id][-30:]
+            self.zone_bayesian[zone_id].update(norm_event, quality_weight)
+            self.zone_decisions[zone_id] = self._evaluate_zone_decision(zone_id, now_utc)
 
         # 10. Decision Engine with Alert Stability & Hysteresis
         recent_norm_events = self.retraction_manager.get_valid_chronological_events(limit=30)
@@ -271,6 +306,7 @@ class InferenceEngine:
             source_health_map=self.source_health,
             now=now_utc,
         )
+        self.latest_decision = decision_result
         action = decision_result["action"]
         expected_costs = decision_result["expected_costs"]
         forecasts = self.forecast(self.active_zone_id)
@@ -372,8 +408,79 @@ class InferenceEngine:
 
     def choose_action(self):
         """Backward-compatible action selection."""
-        decision = self.decision_engine.evaluate(self.probabilities, [])
-        return decision["action"], decision["expected_costs"]
+        return self.latest_decision["action"], self.latest_decision["expected_costs"]
+
+    def _evaluate_zone_decision(self, zone_id: str, now: datetime | None = None) -> dict[str, Any]:
+        decider = self.zone_decision_engines[zone_id]
+        probabilities = self.zone_bayesian[zone_id].probabilities
+        recent_events = self.zone_norm_events[zone_id]
+        if not recent_events:
+            decider.reset()
+            decision = decider.evaluate(probabilities, [], now=now)
+            decider.reset()
+            decision["action"] = "WATCH"
+            decision["previous_action"] = "WATCH"
+            decision["reasons"] = (
+                "WATCH is maintained because this area has no recent local observations "
+                "to support a higher response posture."
+            )
+            decision["gate_reason"] = ""
+            decision["transition_reason"] = ""
+            decision["supporting_evidence"] = []
+            decision["conflicting_evidence"] = []
+            decision["effective_independent_sources"] = 0
+            decision["verification_steps"] = [
+                "Continue monitoring local observations for this area.",
+                "Verify incoming reports before changing the response posture.",
+            ]
+            return decision
+        return decider.evaluate(
+            probabilities=probabilities,
+            recent_events=recent_events,
+            source_health_map=self.source_health,
+            now=now,
+        )
+
+    def _zone_response_rationales(self, zone_id: str, decision: dict[str, Any]) -> dict[str, str]:
+        probabilities = self.zone_bayesian[zone_id].probabilities
+        costs = decision["expected_costs"]
+        optimal_action = decision["raw_cost_optimal_action"]
+        best_cost = min(costs.values())
+        cascade_probability = probabilities.get("cascading_crisis", 0.0)
+        isolated_probability = probabilities.get("isolated_incident", 0.0)
+        failure_probability = probabilities.get("sensor_failure", 0.0)
+        independent_sources = decision["effective_independent_sources"]
+        escalation_threshold = self.zone_decision_engines[zone_id].escalation_threshold
+        evidence = ", ".join(decision["supporting_evidence"][:2]) or "no recent verified local hazard reports"
+
+        return {
+            "WATCH": (
+                f"Continue monitoring while evidence remains limited or uncertain. "
+                f"Expected loss: {costs['WATCH']:.2f}; lowest modeled loss: {best_cost:.2f} ({optimal_action}). "
+                f"Current area posteriors: cascade {cascade_probability:.1%}, isolated incident "
+                f"{isolated_probability:.1%}, sensor failure {failure_probability:.1%}. Evidence: {evidence}."
+            ),
+            "PREPARE": (
+                f"Raise readiness and verify developing signals without issuing an active alert. "
+                f"Expected loss: {costs['PREPARE']:.2f}; lowest modeled loss: {best_cost:.2f} ({optimal_action}). "
+                f"This is appropriate while local evidence is developing and escalation criteria are not met. "
+                f"Evidence: {evidence}."
+            ),
+            "ALERT": (
+                f"Notify coordinators and seek field confirmation when localized incident risk warrants action "
+                f"but escalation is not yet justified. Expected loss: {costs['ALERT']:.2f}; lowest modeled loss: "
+                f"{best_cost:.2f} ({optimal_action}). Cascade posterior: {cascade_probability:.1%}; "
+                f"{independent_sources} independent verified source group(s). Evidence: {evidence}."
+            ),
+            "ESCALATE": (
+                f"Consider inter-agency escalation only when cascade probability reaches "
+                f"{escalation_threshold:.0%} and at least 2 independent verified source groups corroborate it. "
+                f"Current cascade posterior: {cascade_probability:.1%}; independent groups: {independent_sources}. "
+                f"Expected loss: {costs['ESCALATE']:.2f}; lowest modeled loss: {best_cost:.2f} ({optimal_action}). "
+                f"{decision['gate_reason'] or decision['transition_reason'] or 'Escalation criteria are currently satisfied.'} "
+                f"Evidence: {evidence}."
+            ),
+        }
 
     def forecast(self, zone_id: str | None = None):
         """Generates multi-horizon forecasts conditioned on selected Nagpur zone."""
@@ -393,7 +500,8 @@ class InferenceEngine:
         forecasts = self.forecast(zone_id)
 
         target_name = zone_meta["name"]
-        action, costs = self.choose_action()
+        action = self.zone_decisions[zone_id]["action"]
+        costs = self.zone_decisions[zone_id]["expected_costs"]
 
         obs_evidence = []
         for e in zone_events[:5]:
@@ -441,7 +549,7 @@ class InferenceEngine:
             "critical_infrastructure": zone_meta["critical_infrastructure"],
             "flood_vulnerability": zone_meta["known_flood_vulnerability"],
             "action": action,
-            "probabilities": self.probabilities.copy(),
+            "probabilities": self.zone_bayesian[zone_id].probabilities,
             "expected_costs": costs,
             "events_count": len(zone_events),
             "events": zone_events[:15],
@@ -453,7 +561,7 @@ class InferenceEngine:
     def snapshot(self) -> dict[str, Any]:
         """Provides full operational state for live dashboards and clients."""
         action, costs = self.choose_action()
-        decision = self.decision_engine.evaluate(self.probabilities, [])
+        decision = self.latest_decision
 
         recent_norm_events = self.retraction_manager.get_valid_chronological_events(limit=30)
         causal_data = self.causal_graph.evaluate_active_pathways(recent_norm_events)
@@ -464,20 +572,50 @@ class InferenceEngine:
         zone_summaries = {}
         for zid, zmeta in NMC_ZONES.items():
             ze_count = len(self.zone_events.get(zid, []))
+            zone_decision = self.zone_decisions[zid]
             zone_summaries[zid] = {
                 "zone_id": zid,
                 "name": zmeta["name"],
                 "marathi_name": zmeta["marathi_name"],
                 "centroid": zmeta["centroid"],
                 "event_count": ze_count,
-                "action": action if ze_count > 0 else "WATCH",
+                "action": zone_decision["action"],
+                "probabilities": self.zone_bayesian[zid].probabilities,
+                "expected_costs": zone_decision["expected_costs"],
+                "decision_reasons": zone_decision["reasons"],
+                "gate_reason": zone_decision["gate_reason"],
+                "transition_reason": zone_decision["transition_reason"],
+                "supporting_evidence": zone_decision["supporting_evidence"],
+                "conflicting_evidence": zone_decision["conflicting_evidence"],
+                "effective_independent_sources": zone_decision["effective_independent_sources"],
+                "verification_steps": zone_decision["verification_steps"],
+                "response_rationales": self._zone_response_rationales(zid, zone_decision),
+                "recent_events": [
+                    {
+                        "event_type": event.event_type,
+                        "title": event.title,
+                        "severity": event.severity,
+                        "source_id": event.source_id,
+                    }
+                    for event in self.zone_norm_events[zid]
+                ],
+                "last_updated": self.last_assessment_timestamp.isoformat(),
             }
 
-        most_affected_zone = max(
-            NMC_ZONES.keys(),
-            key=lambda zid: len(self.zone_events.get(zid, []))
+        risk_area_id = max(
+            (zid for zid in NMC_ZONES if self.zone_norm_events[zid]),
+            key=lambda zid: (
+                max(event.severity for event in self.zone_norm_events[zid]),
+                self.zone_bayesian[zid].probabilities.get("cascading_crisis", 0.0),
+            ),
+            default=None,
         )
-        most_affected_name = NMC_ZONES[most_affected_zone]["name"]
+        risk_area = zone_summaries.get(risk_area_id) if risk_area_id else None
+        most_affected_name = risk_area["name"] if risk_area else "No area with recent signals"
+        area_probs = risk_area["probabilities"] if risk_area else self.probabilities
+        area_events = risk_area["recent_events"] if risk_area else []
+        area_severity = max((event["severity"] for event in area_events), default=0.0)
+        area_hazard_key = max(area_probs, key=area_probs.get)
 
         if not self.latest_xai_explanation:
             fallback_packet = EvidencePacket(
@@ -516,13 +654,27 @@ class InferenceEngine:
             "expected_costs": costs,
             "decision": decision,
             "risk_overview": {
-                "dominant_hazard": LABELS.get(max(self.probabilities, key=self.probabilities.get), "Baseline"),  # type: ignore
+                "dominant_hazard": LABELS.get(area_hazard_key, "Baseline"),
                 "most_affected_area": most_affected_name,
-                "estimated_probability": round(max(self.probabilities.values()), 3),
-                "severity_index": round(max([e.get("severity", 0.2) for e in list(self.events)[:10]] or [0.25]), 2),
+                "risk_area_id": risk_area_id,
+                "estimated_probability": round(max(area_probs.values()), 3),
+                "cascade_probability": round(area_probs.get("cascading_crisis", 0.0), 3),
+                "severity_index": round(area_severity, 2),
+                "event_count": len(area_events),
+                "recent_events": area_events,
+                "expected_costs": risk_area["expected_costs"] if risk_area else self.latest_decision["expected_costs"],
+                "supporting_evidence": risk_area["supporting_evidence"] if risk_area else [],
+                "response_rationales": (
+                    risk_area["response_rationales"]
+                    if risk_area
+                    else self._zone_response_rationales(
+                        self.active_zone_id,
+                        self.zone_decisions[self.active_zone_id],
+                    )
+                ),
+                "response_recommendation": risk_area["action"] if risk_area else "WATCH",
                 "data_quality_score": 0.88,
                 "uncertainty_level": self.latest_xai_explanation.uncertainty_level,
-                "response_recommendation": action,
                 "evidence_summary": self.latest_xai_explanation.summary,
             },
             "xai_explanation": self.latest_xai_explanation.model_dump(),
@@ -533,6 +685,7 @@ class InferenceEngine:
                 "retracted": len(self.retraction_manager.retracted_event_ids),
             },
             "subregions": zone_summaries,
+            "active_zone_id": self.active_zone_id,
             "events": list(self.events),
             "ledger": list(self.ledger),
             "sources": list(self.source_health.values()),

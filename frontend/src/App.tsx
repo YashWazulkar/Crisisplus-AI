@@ -56,6 +56,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ViewTab>('overview')
   const [showLocationModal, setShowLocationModal] = useState(false)
   const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null)
+  const [zoneReasonZoneId, setZoneReasonZoneId] = useState<string | null>(null)
 
   // Map and Feed Filters
   const [selectedEvent, setSelectedEvent] = useState<AnyObj | null>(null)
@@ -173,7 +174,22 @@ export default function App() {
   const monitoringMode = state.monitoring_mode || 'MIXED'
   const riskOverview = state.risk_overview || {}
   const xai = state.xai_explanation || {}
+  const riskResponse = riskOverview.response_recommendation || 'WATCH'
+  const riskResponseClass = riskResponse.toLowerCase()
+  const riskResponseRationales = riskOverview.response_rationales || {}
+  const riskAreaEvents = riskOverview.recent_events || []
+  const riskAreaEvidence = riskOverview.supporting_evidence || []
   const subregions = state.subregions || {}
+  const areaResponseZoneId = selectedZoneId || state.active_zone_id || 'zone-3-hanuman-nagar'
+  const areaResponse = subregions[areaResponseZoneId] || {}
+  const areaAction = areaResponse.action || 'WATCH'
+  const areaActionClass = areaAction.toLowerCase()
+  const reasonZone = zoneReasonZoneId ? subregions[zoneReasonZoneId] : null
+  const reasonAction = reasonZone?.action || 'WATCH'
+  const reasonEvidence = [
+    ...(reasonZone?.supporting_evidence || []).map((item: string) => ({ label: 'Supporting evidence', text: item })),
+    ...(reasonZone?.conflicting_evidence || []).map((item: string) => ({ label: 'Conflicting signal', text: item })),
+  ]
   const eventCounts = state.event_counts || { total_active: events.length, verified: 0, unverified: 0 }
 
   // Filtered Events for Live Feed
@@ -332,20 +348,19 @@ export default function App() {
               <RadioTower size={22} />
             </div>
             <div>
-              <small>DISTRICT RESPONSE LEVEL</small>
-              <h2 className={actionClass}>{action}</h2>
+              <small>AREA RESPONSE LEVEL</small>
+              <h2 className={areaActionClass}>{areaAction}</h2>
               <p>
-                {mode === 'live'
-                  ? `Active Monitoring: ${location.name}`
-                  : state.scenario_name || 'Genuine cascading crisis'}
+                {areaResponse.name || 'Hanuman Nagar Zone'}
+                {selectedZoneId ? ' · Selected area' : ' · Active area'}
               </p>
             </div>
-            <span className={`status-pill ${actionClass}`}>
-              {action === 'WATCH'
+            <span className={`status-pill ${areaActionClass}`}>
+              {areaAction === 'WATCH'
                 ? 'PASSIVE MONITORING'
-                : action === 'PREPARE'
+                : areaAction === 'PREPARE'
                 ? 'PRE-POSITIONING'
-                : action === 'ALERT'
+                : areaAction === 'ALERT'
                 ? 'FIELD VERIFICATION'
                 : 'INTER-AGENCY ESCALATION'}
             </span>
@@ -457,81 +472,85 @@ export default function App() {
         {activeTab === 'overview' && (
           <>
             {/* Section 4.2.B: NAGPUR RISK OVERVIEW CARD */}
-            <div
-              className="panel"
-              style={{
-                padding: '18px 20px',
-                marginBottom: '16px',
-                background: 'linear-gradient(135deg, #111e33, #0b1320)',
-                border: '1px solid #1e3a5f',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <ShieldCheck size={18} style={{ color: '#38bdf8' }} />
-                  <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 800, letterSpacing: '0.5px' }}>
-                    NAGPUR OPERATIONAL RISK OVERVIEW
-                  </h3>
+            <section className="panel risk-overview">
+              <div className="risk-overview-header">
+                <div className="risk-overview-title">
+                  <div className="risk-overview-icon"><ShieldCheck size={19} /></div>
+                  <div>
+                    <h3>NAGPUR OPERATIONAL RISK OVERVIEW</h3>
+                    <p>Ranked by recent local severity, with cascade probability as the tie-breaker</p>
+                  </div>
                 </div>
-                <span style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'monospace' }}>
-                  UPDATED: {new Date().toLocaleTimeString()}
+                <span className="risk-overview-updated">
+                  UPDATED {new Date().toLocaleTimeString()}
                 </span>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px' }}>
-                <div style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                  <span style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase' }}>Dominant Hazard</span>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#f8fafc', marginTop: '2px' }}>
-                    {riskOverview.dominant_hazard || 'Normal Weather Flow'}
+              <div className="risk-area-hero">
+                <div className="risk-area-heading">
+                  <div>
+                    <span className="risk-area-kicker">HIGHEST RISK AREA</span>
+                    <h2>{riskOverview.most_affected_area || 'No area with recent signals'}</h2>
+                    <p>{riskOverview.dominant_hazard || 'No localized hazard identified'}</p>
+                  </div>
+                  <span className={`risk-area-response ${riskResponseClass}`}>{riskResponse}</span>
+                </div>
+
+                <div className="risk-area-metrics">
+                  <div className="risk-area-metric">
+                    <span>Peak local severity</span>
+                    <strong>{Math.round((riskOverview.severity_index || 0) * 100)}%</strong>
+                  </div>
+                  <div className="risk-area-metric">
+                    <span>Cascade probability</span>
+                    <strong>{pct(riskOverview.cascade_probability || 0)}</strong>
+                  </div>
+                  <div className="risk-area-metric">
+                    <span>Recent area signals</span>
+                    <strong>{riskOverview.event_count || 0}</strong>
+                  </div>
+                  <div className="risk-area-metric">
+                    <span>Model uncertainty</span>
+                    <strong>{riskOverview.uncertainty_level || 'Unknown'}</strong>
                   </div>
                 </div>
 
-                <div style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                  <span style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase' }}>Most Affected Area</span>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#38bdf8', marginTop: '2px' }}>
-                    {riskOverview.most_affected_area || 'Hanuman Nagar Zone'}
+                {riskAreaEvidence.length > 0 ? (
+                  <div className="risk-area-evidence">
+                    <strong>Evidence informing this area assessment</strong>
+                    <ul>
+                      {riskAreaEvidence.slice(0, 3).map((evidence: string, index: number) => (
+                        <li key={index}>{evidence}</li>
+                      ))}
+                    </ul>
                   </div>
-                </div>
-
-                <div style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                  <span style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase' }}>Severity Index</span>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#fbbf24', marginTop: '2px' }}>
-                    {Math.round((riskOverview.severity_index || 0.25) * 100)}% Potential Impact
+                ) : riskAreaEvents.length > 0 ? (
+                  <div className="risk-area-evidence">
+                    <strong>Recent local observations</strong>
+                    <ul>
+                      {riskAreaEvents.slice(0, 3).map((event: AnyObj, index: number) => (
+                        <li key={`${event.source_id}-${index}`}>
+                          {event.title} · severity {Math.round(event.severity * 100)}%
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                </div>
-
-                <div style={{ background: '#0f172a', padding: '12px', borderRadius: '8px', border: '1px solid #1e293b' }}>
-                  <span style={{ fontSize: '9px', color: '#94a3b8', textTransform: 'uppercase' }}>Model Uncertainty</span>
-                  <div style={{ fontSize: '14px', fontWeight: 700, color: '#5eead4', marginTop: '2px' }}>
-                    {riskOverview.uncertainty_level || 'Moderate'} Uncertainty
-                  </div>
-                </div>
+                ) : (
+                  <p className="risk-area-empty">No recent area-level observations are available yet.</p>
+                )}
               </div>
-            </div>
+            </section>
 
             {/* Section 4.2.D: PROMINENT xAI REASONING SECTION */}
-            <div
-              className="panel"
-              style={{
-                padding: '20px',
-                marginBottom: '16px',
-                background: 'linear-gradient(145deg, #0d1b2a, #10233d)',
-                border: '1px solid #2563eb50',
-                boxShadow: '0 8px 32px rgba(37,99,235,0.12)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #1e3a5f', paddingBottom: '12px' }}>
+            <div className="panel xai-risk-panel">
+              <div className="xai-risk-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <div style={{ width: '28px', height: '28px', borderRadius: '6px', background: '#1e3a8a', display: 'grid', placeItems: 'center', color: '#60a5fa' }}>
+                  <div className="xai-risk-icon">
                     <BrainCircuit size={17} />
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#f8fafc', letterSpacing: '0.4px' }}>
-                      WHY DOES CRISISPULSE BELIEVE THIS AREA IS AT RISK?
-                    </h2>
-                    <span style={{ fontSize: '10px', color: '#94a3b8' }}>
-                      EVIDENCE-GROUNDED EXPLAINABLE AI (xAI) REASONING LAYER
-                    </span>
+                    <h2 className="xai-risk-title">WHY DOES CRISISPULSE BELIEVE THIS AREA IS AT RISK?</h2>
+                    <span className="xai-risk-subtitle">Response logic for {riskOverview.most_affected_area || 'the current monitoring area'}</span>
                   </div>
                 </div>
 
@@ -540,8 +559,8 @@ export default function App() {
                     style={{
                       fontSize: '9px',
                       fontFamily: 'monospace',
-                      padding: '3px 8px',
-                      borderRadius: '4px',
+                      padding: '5px 9px',
+                      borderRadius: '6px',
                       background: xai.provider_status === 'xai_grok_live' ? '#22c55e20' : '#38bdf820',
                       color: xai.provider_status === 'xai_grok_live' ? '#22c55e' : '#38bdf8',
                       border: `1px solid ${xai.provider_status === 'xai_grok_live' ? '#22c55e' : '#38bdf8'}40`,
@@ -552,19 +571,35 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Rationale and Synthesis */}
-              <div style={{ marginBottom: '14px' }}>
-                <p style={{ fontSize: '13px', lineHeight: '1.7', color: '#e2e8f0', margin: '0 0 10px' }}>
-                  {xai.decision_rationale || xai.summary || 'Processing analytical evidence packet...'}
-                </p>
-
-                {xai.evidence_synthesis && (
-                  <div style={{ background: '#0b1320', padding: '10px 14px', borderRadius: '6px', fontSize: '11px', border: '1px solid #1e293b' }}>
-                    <strong style={{ color: '#38bdf8' }}>Supporting Field Evidence: </strong>
-                    <span style={{ color: '#cbd5e1' }}>{xai.evidence_synthesis}</span>
-                  </div>
-                )}
+              <div className="response-logic-grid">
+                {(['WATCH', 'PREPARE', 'ALERT', 'ESCALATE'] as const).map(level => (
+                  <article
+                    key={level}
+                    className={`response-logic-card ${level.toLowerCase()}${riskResponse === level ? ' current' : ''}`}
+                  >
+                    <div className="response-logic-card-header">
+                      <span className={`response-logic-dot ${level.toLowerCase()}`} />
+                      <h3>{level.charAt(0) + level.slice(1).toLowerCase()}</h3>
+                      {riskResponse === level && <span className="response-current-label">CURRENT</span>}
+                    </div>
+                    <p>
+                      {riskResponseRationales[level] ||
+                        `This area's current probability and expected-loss assessment will determine whether ${level.toLowerCase()} is appropriate.`}
+                    </p>
+                    <div className="response-logic-cost">
+                      <span>Expected loss</span>
+                      <strong>{Number(riskOverview?.expected_costs?.[level] ?? state.expected_costs?.[level] ?? 0).toFixed(2)}</strong>
+                    </div>
+                  </article>
+                ))}
               </div>
+
+              {xai.evidence_synthesis && (
+                <div className="xai-evidence-synthesis">
+                  <strong>Evidence synthesis</strong>
+                  <p>{xai.evidence_synthesis}</p>
+                </div>
+              )}
 
               {/* Contradictory & Missing Data Disclosures */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '11px', marginBottom: '14px' }}>
@@ -606,7 +641,7 @@ export default function App() {
                     NAGPUR MUNICIPAL CORPORATION · 10 ADMINISTRATIVE ZONES
                   </h3>
                 </div>
-                <span style={{ fontSize: '10px', color: '#94a3b8' }}>CLICK ZONE CARD TO DRILL DOWN</span>
+                <span style={{ fontSize: '10px', color: '#94a3b8' }}>SELECT AN AREA OR VIEW ITS RESPONSE REASONS</span>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px' }}>
@@ -617,40 +652,44 @@ export default function App() {
                   const isSelected = selectedZoneId === zid
 
                   return (
-                    <div
+                    <article
                       key={zid}
-                      onClick={() => setSelectedZoneId(zid)}
-                      style={{
-                        background: isSelected ? '#1e3a5f' : '#0f172a',
-                        border: `1px solid ${isSelected ? '#38bdf8' : '#1e293b'}`,
-                        borderRadius: '6px',
-                        padding: '10px',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                      }}
+                      className={`zone-response-card${isSelected ? ' selected' : ''}`}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                        <strong style={{ fontSize: '11px', color: isSelected ? '#38bdf8' : '#f8fafc' }}>{z.name}</strong>
+                        <strong className="zone-response-name">{z.name}</strong>
                         <span
+                          className={`zone-response-badge ${zAction.toLowerCase()}`}
                           style={{
-                            fontSize: '8px',
-                            fontWeight: 700,
-                            padding: '1px 5px',
-                            borderRadius: '3px',
                             background: `${zColor}20`,
                             color: zColor,
-                            border: `1px solid ${zColor}60`,
+                            borderColor: `${zColor}60`,
                           }}
                         >
                           {zAction}
                         </span>
                       </div>
-                      <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '4px' }}>{z.marathi_name}</div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#64748b' }}>
+                      <div className="zone-response-marathi">{z.marathi_name}</div>
+                      <div className="zone-response-meta">
                         <span>Active signals: {z.event_count || 0}</span>
-                        <span style={{ color: '#38bdf8' }}>View &rarr;</span>
+                        <button
+                          className="zone-select-button"
+                          onClick={() => setSelectedZoneId(zid)}
+                          aria-pressed={isSelected}
+                        >
+                          {isSelected ? 'Selected' : 'Select area'}
+                        </button>
+                        <button
+                          className="zone-reasons-button"
+                          onClick={event => {
+                            setSelectedZoneId(zid)
+                            setZoneReasonZoneId(zid)
+                          }}
+                        >
+                          View reasons <ChevronRight size={12} />
+                        </button>
                       </div>
-                    </div>
+                    </article>
                   )
                 })}
               </div>
@@ -664,10 +703,10 @@ export default function App() {
                   Tempered Dirichlet-adapted Bayesian updates recalculate as validated external evidence arrives.
                 </p>
                 {[
-                  ['normal', 'H1', 'Normal conditions (Noise)', 'blue'],
-                  ['source_failure', 'H2', 'Sensor / Gateway failure', 'purple'],
-                  ['isolated_incident', 'H3', 'Isolated localized incident', 'amber'],
-                  ['cascading_crisis', 'H4', 'Cascading emergency crisis', 'red'],
+                  ['normal', 'H1', 'Normal conditions (Noise)', 'noise'],
+                  ['source_failure', 'H2', 'Sensor / Gateway failure', 'sensor_failure'],
+                  ['isolated_incident', 'H3', 'Isolated localized incident', 'isolated_incident'],
+                  ['cascading_crisis', 'H4', 'Cascading emergency crisis', 'cascading_crisis'],
                 ].map(([key, code, label, tone]) => (
                   <div className="hyp-row" key={key}>
                     <div className="hyp-label">
@@ -1110,6 +1149,85 @@ export default function App() {
         {/* ----------------- TAB: MODEL EVALUATION ----------------- */}
         {activeTab === 'evaluation' && (
           <EvaluationPanel apiBase={API} />
+        )}
+
+        {reasonZone && (
+          <div className="zone-reasons-backdrop" onClick={() => setZoneReasonZoneId(null)}>
+            <section
+              className="zone-reasons-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="zone-reasons-title"
+              onClick={event => event.stopPropagation()}
+            >
+              <header className="zone-reasons-header">
+                <div>
+                  <span className="zone-reasons-kicker">AREA RESPONSE EXPLANATION</span>
+                  <h2 id="zone-reasons-title">{reasonZone.name}</h2>
+                  <span className="zone-reasons-marathi">{reasonZone.marathi_name}</span>
+                </div>
+                <button
+                  className="zone-reasons-close"
+                  aria-label="Close area response reasons"
+                  onClick={() => setZoneReasonZoneId(null)}
+                >
+                  ×
+                </button>
+              </header>
+
+              <div className={`zone-reasons-action ${reasonAction.toLowerCase()}`}>
+                <span>Current response</span>
+                <strong>{reasonAction}</strong>
+                <small>{reasonZone.event_count || 0} active local signals</small>
+              </div>
+
+              <div className="zone-reasons-section">
+                <h3>Why this response?</h3>
+                <p>{reasonZone.decision_reasons || 'No recent local evidence is available; this area remains at WATCH.'}</p>
+                {reasonZone.gate_reason && <p className="zone-reasons-note">{reasonZone.gate_reason}</p>}
+                {reasonZone.transition_reason && <p className="zone-reasons-note">{reasonZone.transition_reason}</p>}
+              </div>
+
+              {reasonEvidence.length > 0 && (
+                <div className="zone-reasons-section">
+                  <h3>Assessment signals</h3>
+                  <ul className="zone-reasons-list">
+                    {reasonEvidence.map((item, index) => (
+                      <li key={`${item.label}-${index}`}>
+                        <strong>{item.label}:</strong> {item.text}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="zone-reasons-section">
+                <h3>Hypothesis probabilities</h3>
+                <div className="zone-reasons-probabilities">
+                  {Object.entries(reasonZone.probabilities || {}).map(([hypothesis, probability]) => (
+                    <span key={hypothesis}>
+                      {pretty(hypothesis)} <strong>{pct(Number(probability))}</strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {reasonZone.verification_steps?.length > 0 && (
+                <div className="zone-reasons-section">
+                  <h3>Suggested verification</h3>
+                  <ul className="zone-reasons-list">
+                    {reasonZone.verification_steps.map((step: string, index: number) => (
+                      <li key={index}>{step}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <footer className="zone-reasons-footer">
+                Decision support only. Authorized responders should verify conditions before acting.
+              </footer>
+            </section>
+          </div>
         )}
 
         {/* Location Selection Modal */}
