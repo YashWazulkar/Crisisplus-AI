@@ -40,7 +40,12 @@ import EvaluationPanel from './components/EvaluationPanel'
 import LocationModal from './components/LocationModal'
 import SubregionDetailPanel from './components/SubregionDetailPanel'
 
-const API = 'http://127.0.0.1:8000'
+const API = (
+  import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000'
+).replace(/\/$/, '')
+
+const WS_URL = API.replace(/^http/, 'ws') + '/ws'
+
 type AnyObj = Record<string, any>
 const pct = (v: number) => `${Math.round((v || 0) * 100)}%`
 const pretty = (s: string) => (s || '').replace(/_/g, ' ')
@@ -85,7 +90,7 @@ export default function App() {
 
     let ws: WebSocket | undefined
     try {
-      ws = new WebSocket('ws://127.0.0.1:8000/ws')
+      ws = new WebSocket(WS_URL)
       ws.onopen = () => setConnected(true)
       ws.onclose = () => setConnected(false)
       ws.onmessage = e => {
